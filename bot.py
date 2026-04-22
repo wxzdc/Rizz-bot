@@ -33,8 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Configure Google Gemini API
 genai.configure(api_key=GOOGLE_GEMINI_API_KEY)
-# Using gemini-1.5-flash as it is widely supported for multimodal tasks
-model = genai.GenerativeModel("gemini-1.5-flash")
+# Using gemini-2.0-flash as requested for better compatibility and performance
+MODEL_NAME = "gemini-2.0-flash"
+model = genai.GenerativeModel(MODEL_NAME)
 
 # Conversation states for registration
 ASK_NAME, ASK_PHONE, ASK_GENDER = range(3)
@@ -120,7 +121,7 @@ async def generate_rizz_response(prompt: str, image_bytes: bytes = None) -> str:
         
         return response.text
     except Exception as e:
-        logger.error(f"Error generating content from Gemini: {e}", exc_info=True)
+        logger.error(f"Error generating content from Gemini ({MODEL_NAME}): {e}", exc_info=True)
         return "Kechirasiz, javobni shakllantirishda xatolik yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring."
 
 # --- Telegram Bot Handlers ---
@@ -278,7 +279,7 @@ def main():
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CommandHandler("grant", grant_access))
 
-    logger.info("Bot ishga tushdi...")
+    logger.info(f"Bot ishga tushdi (Model: {MODEL_NAME})...")
     application.run_polling()
 
 if __name__ == "__main__":
