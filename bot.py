@@ -2,6 +2,8 @@
 import logging
 import os
 import sqlite3
+import io
+from PIL import Image
 
 import google.generativeai as genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -31,7 +33,8 @@ logger = logging.getLogger(__name__)
 
 # Configure Google Gemini API
 genai.configure(api_key=GOOGLE_GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash")
+# Using gemini-1.5-flash as it is widely supported for multimodal tasks
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 # Conversation states for registration
 ASK_NAME, ASK_PHONE, ASK_GENDER = range(3)
@@ -95,7 +98,7 @@ def grant_premium_access(user_id):
     conn.close()
 
 # --- Helper Functions ---
-async def generate_rizz_response(prompt: str, image_path: str = None) -> str:
+async def generate_rizz_response(prompt: str, image_bytes: bytes = None) -> str:
     """Generates flirty/rizz response using Gemini with 3 levels."""
     try:
         system_prompt = (
@@ -108,16 +111,17 @@ async def generate_rizz_response(prompt: str, image_path: str = None) -> str:
             "Faqat javob variantlarini qaytaring, boshqa ortiqcha matn qo'shmang."
         )
 
-        if image_path:
-            image = genai.upload_file(image_path)
-            response = model.generate_content([system_prompt, image, prompt])
+        if image_bytes:
+            # Convert bytes to PIL Image for Gemini
+            img = Image.open(io.BytesIO(image_bytes))
+            response = model.generate_content([system_prompt, img, prompt])
         else:
             response = model.generate_content(f"{system_prompt}\n\nVaziyat: {prompt}")
         
         return response.text
     except Exception as e:
-        logger.error(f"Error generating content: {e}")
-        return "Kechirasiz, javobni shakllantirishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring."
+        logger.error(f"Error generating content from Gemini: {e}", exc_info=True)
+        return "Kechirasiz, javobni shakllantirishda xatolik yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring."
 
 # --- Telegram Bot Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -215,30 +219,33 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    await update.message.reply_text("Skrinshotni tahlil qilmoqdaman, iltimos kuting...")
+    processing_msg = await update.message.reply_text("Skrinshotni tahlil qilmoqdaman, iltimos kuting...")
 
     try:
+        # Get photo file
         photo_file = await update.message.photo[-1].get_file()
-        file_path = f"{photo_file.file_id}.jpg"
-        await photo_file.download_to_drive(file_path)
+        # Download photo to memory buffer
+        image_bytes = await photo_file.download_as_bytearray()
 
         caption = update.message.caption if update.message.caption else "Chat skrinshoti tahlili."
-        response_text = await generate_rizz_response(caption, image_path=file_path)
+        response_text = await generate_rizz_response(caption, image_bytes=bytes(image_bytes))
         
         if response_text:
             await update.message.reply_text(response_text)
         else:
             await update.message.reply_text("Kechirasiz, tahlil natijasida hech qanday javob olinmadi.")
 
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
         if not user["is_premium"]:
             update_usage_count(user_id)
             
     except Exception as e:
-        logger.error(f"Error in handle_photo: {e}")
-        await update.message.reply_text("Rasm tahlilida xatolik yuz berdi.")
+        logger.error(f"Error in handle_photo: {e}", exc_info=True)
+        await update.message.reply_text("Rasm tahlilida xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
+    finally:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg.message_id)
+        except:
+            pass
 
 async def grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.username != ADMIN_USERNAME:
